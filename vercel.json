@@ -26,7 +26,10 @@
     {
       "src": "/api/sms/webhook",
       "dest": "src/api/sms-webhook.ts"
+    },
+    {
+      "src": "/api/imessage/inbound",
+      "dest": "src/api/imessage/inbound.ts"
     }
   ]
-
 }
