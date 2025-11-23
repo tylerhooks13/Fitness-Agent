@@ -1,0 +1,41 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "src/index.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "src/api/sms-webhook.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "src/api/cron/daily-briefing.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "src/api/cron/hydration-reminder.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "src/api/imessage/inbound.ts",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/sms/webhook",
+      "dest": "src/api/sms-webhook.ts"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/daily-briefing",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/hydration-reminder",
+      "schedule": "0 12,16,20 * * *"
+    }
+  ]
+}
