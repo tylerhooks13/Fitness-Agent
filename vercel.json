@@ -27,15 +27,6 @@
       "src": "/api/sms/webhook",
       "dest": "src/api/sms-webhook.ts"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/cron/daily-briefing",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron/hydration-reminder",
-      "schedule": "0 12,16,20 * * *"
-    }
   ]
+
 }
