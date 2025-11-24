@@ -20,6 +20,10 @@
     {
       "src": "src/api/imessage/inbound.ts",
       "use": "@vercel/node"
+    },
+    {
+      "src": "src/api/telegram-webhook.ts",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
@@ -30,6 +34,10 @@
     {
       "src": "/api/imessage/inbound",
       "dest": "src/api/imessage/inbound.ts"
+    },
+    {
+      "src": "/api/telegram/webhook",
+      "dest": "src/api/telegram-webhook.ts"
     }
   ]
 }

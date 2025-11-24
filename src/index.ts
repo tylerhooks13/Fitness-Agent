@@ -4,6 +4,7 @@ import { logger } from './utils/logger';
 import dailyBriefingHandler from './api/cron/daily-briefing';
 import smsWebhookHandler from './api/sms-webhook';
 import imessageInboundHandler from './api/imessage/inbound';
+import telegramWebhookHandler from './api/telegram-webhook';
 
 const app = express();
 app.use(express.json());
@@ -33,6 +34,10 @@ app.post('/api/sms/webhook', (req, res) => {
 
 app.post('/api/imessage/inbound', (req, res) => {
   void imessageInboundHandler(req, res);
+});
+
+app.post('/api/telegram/webhook', (req, res) => {
+  void telegramWebhookHandler(req, res);
 });
 
 const port = env.port || 3000;
