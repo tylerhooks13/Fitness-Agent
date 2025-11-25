@@ -214,6 +214,174 @@ export const getWorkoutTemplates = async () => {
   return response.results.map(mapWorkoutPage);
 };
 
+export const getWorkoutFrequency = async (
+  daysBack: number = 30,
+): Promise<{ name: string; count: number }> => {
+  if (!env.notionWorkoutDatabaseId) {
+    return { name: '', count: 0 };
+  }
+
+  const client = getClient();
+
+  const today = startOfUserDay();
+  const since = new Date(today.getTime() - daysBack * 24 * 60 * 60 * 1000);
+  const sinceDate = since.toISOString().split('T')[0];
+
+  const response = await client.request<{ results: any[] }>({
+    path: `databases/${env.notionWorkoutDatabaseId}/query`,
+    method: 'post',
+    body: {
+      filter: {
+        and: [
+          {
+            property: workoutPropertyMap.date,
+            date: {
+              on_or_after: sinceDate,
+            },
+          },
+          {
+            property: workoutPropertyMap.date,
+            date: {
+              on_or_before: today.toISOString().split('T')[0],
+            },
+          },
+        ],
+      },
+    },
+  });
+
+  const counts: Record<string, number> = {};
+
+  response.results.forEach((page: any) => {
+    const workout = mapWorkoutPage(page);
+    const key = workout.name || 'Workout';
+    counts[key] = (counts[key] || 0) + 1;
+  });
+
+  const sorted = Object.entries(counts)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  return sorted[0] ?? { name: '', count: 0 };
+};
+
+export const getDistinctWorkoutNames = async (maxTemplates = 20): Promise<string[]> => {
+  if (!env.notionWorkoutDatabaseId) return [];
+  const client = getClient();
+
+  const response = await client.request<{ results: any[] }>({
+    path: `databases/${env.notionWorkoutDatabaseId}/query`,
+    method: 'post',
+    body: {
+      page_size: 100,
+    },
+  });
+
+  const seen = new Set<string>();
+  for (const page of response.results) {
+    const workout = mapWorkoutPage(page);
+    if (workout.name) {
+      seen.add(workout.name);
+      if (seen.size >= maxTemplates) break;
+    }
+  }
+
+  return Array.from(seen).sort((a, b) => a.localeCompare(b));
+};
+
+export const createWorkoutSessionFromTemplateName = async (
+  templateName: string,
+  forDate: Date,
+): Promise<{ pageId: string }> => {
+  if (!env.notionWorkoutDatabaseId) {
+    throw new Error('NOTION_WORKOUT_DATABASE_ID is not configured');
+  }
+
+  const client = getClient();
+  const databaseId = env.notionWorkoutDatabaseId;
+
+  // Find a page whose title matches the template name.
+  const searchResponse = await client.request<{ results: any[] }>({
+    path: `databases/${databaseId}/query`,
+    method: 'post',
+    body: {
+      filter: {
+        property: 'Day of Week',
+        title: {
+          equals: templateName,
+        },
+      },
+      page_size: 1,
+    },
+  });
+
+  if (searchResponse.results.length === 0) {
+    throw new Error(`No workout template found with name "${templateName}"`);
+  }
+
+  const templatePage: any = searchResponse.results[0];
+
+  const dateIso = forDate.toISOString().split('T')[0];
+
+  // Read properties from the template so we can reuse workout type.
+  const templateProps = templatePage.properties ?? {};
+  const workoutTypeProp = templateProps[workoutPropertyMap.type];
+  const workoutType =
+    workoutTypeProp?.multi_select?.map((t: any) => ({ name: t.name })).filter((t: any) => t.name) ??
+    [];
+
+  const newPage = await client.pages.create({
+    parent: { database_id: databaseId },
+    properties: {
+      // Title property for this DB
+      'Day of Week': {
+        title: [
+          {
+            type: 'text',
+            text: { content: templateName },
+          },
+        ],
+      },
+      [workoutPropertyMap.date]: {
+        date: { start: dateIso },
+      },
+      ...(workoutType.length > 0
+        ? {
+            [workoutPropertyMap.type]: {
+              multi_select: workoutType,
+            },
+          }
+        : {}),
+    },
+  });
+
+  // Copy blocks from template page to new page body.
+  const blocks = await client.blocks.children.list({
+    block_id: templatePage.id,
+    page_size: 100,
+  });
+
+  const children = blocks.results as any[];
+
+  if (children.length > 0) {
+    await client.blocks.children.append({
+      block_id: newPage.id,
+      // The SDK types are stricter than what Notion actually accepts here;
+      // we reuse the fetched blocks as the request payload.
+      children: children as any,
+    });
+  }
+
+  logger.info('Created workout session from template', {
+    templateName,
+    templateId: templatePage.id,
+    newPageId: newPage.id,
+    date: dateIso,
+  });
+
+  return { pageId: newPage.id };
+};
+
 const extractPlainText = (richTextArray: any[] | undefined): string => {
   if (!richTextArray || richTextArray.length === 0) return '';
   return richTextArray.map((r: any) => r.plain_text ?? '').join(' ').trim();

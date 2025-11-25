@@ -32,8 +32,14 @@ export const generateDailyWorkoutBriefing = async (): Promise<string> => {
   lines.push('');
 
   enriched.forEach(({ workout, exercises }, index) => {
+    const primaryType = workout.workoutType?.[0];
+    const nameIncludesPrimaryType =
+      primaryType &&
+      workout.name.toLowerCase().includes(primaryType.toLowerCase());
     const typeLabel =
-      workout.workoutType && workout.workoutType.length > 0
+      workout.workoutType &&
+      workout.workoutType.length > 0 &&
+      !nameIncludesPrimaryType
         ? ` — ${workout.workoutType.join(', ')}`
         : '';
     const headerPrefix = workouts.length > 1 ? `${index + 1}. ` : '';
