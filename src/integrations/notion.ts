@@ -136,11 +136,18 @@ const workoutPropertyMap = {
 const mapWorkoutPage = (page: any): NotionWorkout => {
   const props = page.properties ?? {};
 
-  const titleProp = props[workoutPropertyMap.title];
+  // Notion requires one title property per database; in your workout DB
+  // this is currently "Day of Week". We also fall back to a generic "Name"
+  // property so the code remains resilient if you rename columns later.
+  const titleProp =
+    props['Day of Week'] ??
+    props[workoutPropertyMap.title] ??
+    props['Name'] ??
+    props['Title'];
   const title =
     titleProp?.title?.[0]?.plain_text ??
     titleProp?.rich_text?.[0]?.plain_text ??
-    'Untitled Workout';
+    '';
 
   const dateProp = props[workoutPropertyMap.date]?.date;
   const date = dateProp?.start ?? undefined;
@@ -150,7 +157,7 @@ const mapWorkoutPage = (page: any): NotionWorkout => {
 
   return {
     id: page.id,
-    name: title,
+    name: title || 'Workout',
     date,
     workoutType,
     redLightTherapy: Boolean(props[workoutPropertyMap.redLight]?.checkbox),

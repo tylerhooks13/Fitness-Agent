@@ -1,5 +1,6 @@
 import { appendSessionNoteToTodayWorkout } from '../integrations/notion';
 import { generateDailyWorkoutBriefing } from './briefing-generator';
+import { runFitnessAgent } from './fitness-agent';
 
 export const handleTextMessage = async (rawText: string): Promise<string> => {
   const text = rawText.trim();
@@ -25,6 +26,7 @@ export const handleTextMessage = async (rawText: string): Promise<string> => {
     return `📝 Got it. I added this note to today’s “${workoutName}” session in Notion.`;
   }
 
-  return 'Hi. I can currently log workout session notes from your messages, or send today’s briefing.\n\nTry:\n- `brief`\n- `note Your message here`\n\nMore commands (hydration, recovery, etc.) will be enabled later.';
+  // Fallback to LLM-powered coaching for open-ended questions.
+  const coachingReply = await runFitnessAgent(text);
+  return coachingReply;
 };
-
