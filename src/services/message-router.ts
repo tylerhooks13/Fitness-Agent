@@ -15,15 +15,60 @@ export const handleTextMessage = async (rawText: string): Promise<string> => {
     return '📝 Send `note ...` to add a session note, or `brief` to get today’s training overview.\n\nExamples:\n- `brief`\n- `note Energy was low but form felt strong on RDLs.`';
   }
 
+  const trimmedLower = lower.trim();
+
+  if (trimmedLower === 'hi' || trimmedLower === 'hey' || trimmedLower === 'hello') {
+    return "🌅 Morning Tyler. How are you feeling physically and mentally today?\n\nReply with `note ...` (for example: `note Energy is 7/10, hips feel tight, slept lightly`) and I’ll log it into today’s session.";
+  }
+
   if (lower === 'brief' || lower === 'brief today') {
     const workoutSection = await generateDailyWorkoutBriefing();
     return workoutSection;
   }
 
   if (
-    lower.startsWith('create') &&
-    lower.includes('today') &&
-    (lower.includes('workout') || lower.includes('page'))
+    lower.includes('workout database') ||
+    lower.includes('training history') ||
+    lower.includes('how my training looks') ||
+    lower.includes('how my training has been')
+  ) {
+    const { getWorkoutOverview } = await import('../integrations/notion');
+    const overview = await getWorkoutOverview(60);
+
+    if (overview.totalSessions === 0) {
+      return "I don't see any completed workouts in your Notion database yet. Once you start logging, I can read your history back to you and help you see the patterns.";
+    }
+
+    const typeLines = Object.entries(overview.byType)
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => `- ${type}: ${count} session${count === 1 ? '' : 's'}`);
+
+    const summary = [
+      `From ${overview.sinceDate} to ${overview.untilDate}, you logged ${overview.totalSessions} workout session${
+        overview.totalSessions === 1 ? '' : 's'
+      } across ${overview.distinctWorkouts} different workouts.`,
+      '',
+      'Breakdown by type:',
+      ...typeLines,
+    ].join('\n');
+
+    const coachingReply = await runFitnessAgent(
+      `Here is a summary of Tyler's workout database over the last 60 days:\n\n${summary}\n\nUser question: "${text}"\n\nAnswer as the Where the Fire Went Fitness Agent and connect these patterns to discipline, recovery, and next aligned steps.`,
+    );
+
+    return coachingReply;
+  }
+
+  if (lower.includes('create') && lower.includes('new') && lower.includes('workout')) {
+    return 'I can create today’s workout from one of your existing templates, or build a custom session for how you feel right now.\n\nReply `template` to choose from saved workouts, or `custom` to have me design a fresh session.';
+  }
+
+  if (
+    trimmedLower === 'template' ||
+    lower.includes('from template') ||
+    (lower.startsWith('create') &&
+      lower.includes('today') &&
+      (lower.includes('workout') || lower.includes('page')))
   ) {
     const templates = await getDistinctWorkoutNames();
 
@@ -85,6 +130,13 @@ export const handleTextMessage = async (rawText: string): Promise<string> => {
     const today = new Date();
     await createWorkoutSessionFromTemplateName(matchedTemplate, today);
     return `I’ve created a new workout page for today in Notion based on **${matchedTemplate}**. Return to the ritual and move through the session with focus.`;
+  }
+
+  if (trimmedLower === 'custom' || lower.includes('custom workout')) {
+    const coachingReply = await runFitnessAgent(
+      `Tyler has asked for a custom workout session for today. Design a single-session plan that fits her protocol (as defined in the persona), including a brief warm-up and 4–5 movements with sets and rep ranges. Do not mention databases or tools—just speak to her directly in the established Where the Fire Went tone.`,
+    );
+    return coachingReply;
   }
 
   if (lower.startsWith('note ')) {

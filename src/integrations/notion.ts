@@ -265,6 +265,77 @@ export const getWorkoutFrequency = async (
   return sorted[0] ?? { name: '', count: 0 };
 };
 
+export const getWorkoutOverview = async (
+  daysBack: number = 60,
+): Promise<{
+  totalSessions: number;
+  distinctWorkouts: number;
+  byType: Record<string, number>;
+  sinceDate: string;
+  untilDate: string;
+}> => {
+  if (!env.notionWorkoutDatabaseId) {
+    return {
+      totalSessions: 0,
+      distinctWorkouts: 0,
+      byType: {},
+      sinceDate: '',
+      untilDate: '',
+    };
+  }
+
+  const client = getClient();
+
+  const today = startOfUserDay();
+  const since = new Date(today.getTime() - daysBack * 24 * 60 * 60 * 1000);
+  const sinceDate = since.toISOString().split('T')[0];
+  const untilDate = today.toISOString().split('T')[0];
+
+  const response = await client.request<{ results: any[] }>({
+    path: `databases/${env.notionWorkoutDatabaseId}/query`,
+    method: 'post',
+    body: {
+      filter: {
+        and: [
+          {
+            property: workoutPropertyMap.date,
+            date: {
+              on_or_after: sinceDate,
+            },
+          },
+          {
+            property: workoutPropertyMap.date,
+            date: {
+              on_or_before: untilDate,
+            },
+          },
+        ],
+      },
+      page_size: 100,
+    },
+  });
+
+  const byType: Record<string, number> = {};
+  const names = new Set<string>();
+
+  response.results.forEach((page: any) => {
+    const workout = mapWorkoutPage(page);
+    if (workout.name) names.add(workout.name);
+    const types = workout.workoutType && workout.workoutType.length > 0 ? workout.workoutType : ['Uncategorized'];
+    types.forEach((t) => {
+      byType[t] = (byType[t] || 0) + 1;
+    });
+  });
+
+  return {
+    totalSessions: response.results.length,
+    distinctWorkouts: names.size,
+    byType,
+    sinceDate,
+    untilDate,
+  };
+};
+
 export const getDistinctWorkoutNames = async (maxTemplates = 20): Promise<string[]> => {
   if (!env.notionWorkoutDatabaseId) return [];
   const client = getClient();
@@ -273,6 +344,13 @@ export const getDistinctWorkoutNames = async (maxTemplates = 20): Promise<string
     path: `databases/${env.notionWorkoutDatabaseId}/query`,
     method: 'post',
     body: {
+      // Treat pages without a Workout Date as templates.
+      filter: {
+        property: workoutPropertyMap.date,
+        date: {
+          is_empty: true,
+        },
+      },
       page_size: 100,
     },
   });
