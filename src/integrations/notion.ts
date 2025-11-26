@@ -31,6 +31,11 @@ const hydrationDailyPropertyMap = {
   goal: 'Goal (oz)',
 };
 
+const checkinPropertyMap = {
+  date: 'Date',
+  note: 'Note',
+};
+
 interface HydrationDay {
   id: string;
   date: string;
@@ -124,6 +129,33 @@ export const getTodayHydrationTotal = async (): Promise<number> => {
   return day.totalOz;
 };
 
+export const logDailyCheckin = async (note: string, atDate: Date = new Date()) => {
+  const databaseId = env.notionCheckinDatabaseId;
+  if (!databaseId) return;
+
+  const client = getClient();
+  const dateIso = atDate.toISOString().split('T')[0];
+
+  await client.pages.create({
+    parent: { database_id: databaseId },
+    properties: {
+      [checkinPropertyMap.date]: {
+        date: { start: dateIso },
+      },
+      [checkinPropertyMap.note]: {
+        rich_text: [
+          {
+            type: 'text',
+            text: { content: note },
+          },
+        ],
+      },
+    },
+  });
+
+  logger.info('Logged daily check-in to Notion', { date: dateIso });
+};
+
 const workoutPropertyMap = {
   title: 'Name',
   date: 'Workout Date',
@@ -211,6 +243,69 @@ export const getWorkoutTemplates = async () => {
     method: 'post',
     body: {},
   });
+  return response.results.map(mapWorkoutPage);
+};
+
+export const getTemplateWorkouts = async (): Promise<NotionWorkout[]> => {
+  if (!env.notionWorkoutDatabaseId) return [];
+  const client = getClient();
+
+  const response = await client.request<{ results: any[] }>({
+    path: `databases/${env.notionWorkoutDatabaseId}/query`,
+    method: 'post',
+    body: {
+      filter: {
+        property: workoutPropertyMap.date,
+        date: {
+          is_empty: true,
+        },
+      },
+      page_size: 100,
+    },
+  });
+
+  return response.results.map(mapWorkoutPage);
+};
+
+export const getRecentWorkoutsByName = async (
+  workoutName: string,
+  limit: number = 5,
+): Promise<NotionWorkout[]> => {
+  if (!env.notionWorkoutDatabaseId) return [];
+  const client = getClient();
+
+  const todayIsoDate = startOfUserDay().toISOString().split('T')[0];
+
+  const response = await client.request<{ results: any[] }>({
+    path: `databases/${env.notionWorkoutDatabaseId}/query`,
+    method: 'post',
+    body: {
+      filter: {
+        and: [
+          {
+            property: 'Day of Week',
+            title: {
+              equals: workoutName,
+            },
+          },
+          {
+            property: workoutPropertyMap.date,
+            date: {
+              before: todayIsoDate,
+            },
+          },
+        ],
+      },
+      sorts: [
+        {
+          property: workoutPropertyMap.date,
+          direction: 'descending',
+        },
+      ],
+      page_size: limit,
+    },
+  });
+
   return response.results.map(mapWorkoutPage);
 };
 
@@ -334,6 +429,50 @@ export const getWorkoutOverview = async (
     sinceDate,
     untilDate,
   };
+};
+
+export const getUpcomingWorkoutsThisWeek = async (): Promise<NotionWorkout[]> => {
+  if (!env.notionWorkoutDatabaseId) return [];
+  const client = getClient();
+
+  const today = startOfUserDay();
+  const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+  const daysUntilSunday = (7 - dayOfWeek) % 7;
+  const endOfWeek = new Date(today.getTime() + daysUntilSunday * 24 * 60 * 60 * 1000);
+
+  const todayIso = today.toISOString().split('T')[0];
+  const endIso = endOfWeek.toISOString().split('T')[0];
+
+  const response = await client.request<{ results: any[] }>({
+    path: `databases/${env.notionWorkoutDatabaseId}/query`,
+    method: 'post',
+    body: {
+      filter: {
+        and: [
+          {
+            property: workoutPropertyMap.date,
+            date: {
+              on_or_after: todayIso,
+            },
+          },
+          {
+            property: workoutPropertyMap.date,
+            date: {
+              on_or_before: endIso,
+            },
+          },
+        ],
+      },
+      sorts: [
+        {
+          property: workoutPropertyMap.date,
+          direction: 'ascending',
+        },
+      ],
+    },
+  });
+
+  return response.results.map(mapWorkoutPage);
 };
 
 export const getDistinctWorkoutNames = async (maxTemplates = 20): Promise<string[]> => {
@@ -524,6 +663,71 @@ export const getWorkoutExercises = async (pageId: string): Promise<NotionExercis
   }
 
   return exercises;
+};
+
+export const updateWorkoutWeights = async (
+  pageId: string,
+  suggestions: { exercise: string; suggestedWeight?: number }[],
+) => {
+  if (!suggestions.length) return;
+
+  const client = getClient();
+  const suggestionMap = new Map(
+    suggestions
+      .filter((s) => s.suggestedWeight !== undefined)
+      .map((s) => [s.exercise.toLowerCase(), s.suggestedWeight as number]),
+  );
+
+  if (suggestionMap.size === 0) return;
+
+  const blocks = await client.blocks.children.list({
+    block_id: pageId,
+    page_size: 50,
+  });
+
+  const tableBlock = blocks.results.find((b: any) => b.type === 'table');
+  if (!tableBlock) return;
+
+  const rowsResponse = await client.blocks.children.list({
+    block_id: tableBlock.id,
+    page_size: 50,
+  });
+
+  for (const row of rowsResponse.results as any[]) {
+    if (row.type !== 'table_row') continue;
+    const name = extractPlainText(row.table_row?.cells?.[0]);
+    const key = name.toLowerCase();
+    if (!suggestionMap.has(key)) continue;
+
+    const weight = suggestionMap.get(key);
+    if (weight === undefined) continue;
+
+    const cells = row.table_row?.cells ?? [];
+    const newCells = cells.slice();
+
+    // Ensure there is a 4th column for Lbs.
+    while (newCells.length < 4) {
+      newCells.push([]);
+    }
+
+    newCells[3] = [
+      {
+        type: 'text',
+        text: { content: `${weight}` },
+      },
+    ];
+
+    await client.blocks.update({
+      block_id: row.id,
+      table_row: {
+        cells: newCells,
+      },
+    } as any);
+  }
+
+  logger.info('Updated workout weights in Notion', {
+    pageId,
+  });
 };
 
 export const appendNoteToWorkoutPage = async (pageId: string, note: string) => {

@@ -15,6 +15,7 @@ export type Env = {
   notionExerciseDatabaseId?: string;
   notionRecoveryDatabaseId?: string;
   notionHydrationDatabaseId?: string;
+  notionCheckinDatabaseId?: string;
   googleClientId?: string;
   googleClientSecret?: string;
   googleRedirectUri?: string;
@@ -51,6 +52,7 @@ export const env: Env = {
   notionExerciseDatabaseId: process.env.NOTION_EXERCISE_DATABASE_ID,
   notionRecoveryDatabaseId: process.env.NOTION_RECOVERY_DATABASE_ID,
   notionHydrationDatabaseId: process.env.NOTION_HYDRATION_DATABASE_ID,
+  notionCheckinDatabaseId: process.env.NOTION_CHECKIN_DATABASE_ID,
   googleClientId: process.env.GOOGLE_CLIENT_ID,
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
   googleRedirectUri: process.env.GOOGLE_REDIRECT_URI,

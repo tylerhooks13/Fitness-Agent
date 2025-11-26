@@ -3,9 +3,13 @@ import {
   getWorkoutFrequency,
   getDistinctWorkoutNames,
   createWorkoutSessionFromTemplateName,
+  getUpcomingWorkoutsThisWeek,
+  logDailyCheckin,
+  getTemplateWorkouts,
 } from '../integrations/notion';
 import { generateDailyWorkoutBriefing } from './briefing-generator';
 import { runFitnessAgent } from './fitness-agent';
+import { getSuggestedWeightsForTodayWorkout } from './weight-predictor';
 
 export const handleTextMessage = async (rawText: string): Promise<string> => {
   const text = rawText.trim();
@@ -24,6 +28,62 @@ export const handleTextMessage = async (rawText: string): Promise<string> => {
   if (lower === 'brief' || lower === 'brief today') {
     const workoutSection = await generateDailyWorkoutBriefing();
     return workoutSection;
+  }
+
+  if (
+    lower.includes('plans for the rest of the week') ||
+    lower.includes('plans for the remainder of the week') ||
+    lower.includes('what’s left this week') ||
+    lower.includes("what's left this week") ||
+    lower.includes('what is left this week') ||
+    lower.includes('rest of the week')
+  ) {
+    const upcoming = await getUpcomingWorkoutsThisWeek();
+
+    if (upcoming.length === 0) {
+      return 'From today through Sunday, there are no workouts scheduled in Notion. If you’d like, I can help you stand up a simple structure for the rest of this week.';
+    }
+
+    const lines: string[] = [];
+    lines.push("Here’s what remains for this week:");
+    upcoming.forEach((w) => {
+      const dateLabel = w.date?.slice(5) ?? 'Today';
+      const typeLabel =
+        w.workoutType && w.workoutType.length > 0 ? ` — ${w.workoutType.join(', ')}` : '';
+      lines.push(`${dateLabel} — ${w.name}${typeLabel}`);
+    });
+
+    return lines.join('\n');
+  }
+
+  if (
+    lower.includes('plan next week') ||
+    lower.includes('help me plan next week') ||
+    lower.includes('next week plan') ||
+    lower.includes('training plan for next week')
+  ) {
+    const templates = await getTemplateWorkouts();
+
+    if (templates.length === 0) {
+      return 'I don’t see any workout templates in Notion yet. Once you’ve saved a few (Legs & Glutes, Upper Body & Abs, Sprint Intervals, etc.), I can help you turn them into a weekly structure.';
+    }
+
+    const templateLines = templates.map((t) => {
+      const typeLabel =
+        t.workoutType && t.workoutType.length > 0 ? ` — ${t.workoutType.join(', ')}` : '';
+      return `• ${t.name}${typeLabel}`;
+    });
+
+    const context = [
+      'Here are the workout templates available in Notion:',
+      ...templateLines,
+    ].join('\n');
+
+    const coachingReply = await runFitnessAgent(
+      `${context}\n\nTyler is asking you to help plan her training for next week (Monday through Sunday).\n\nBased on these templates and her protocol, propose a simple weekly structure with 2 lower-body/glute-focused days, 2 upper/back days, 1–2 conditioning or interval days, and at least 1 active recovery / Pilates or walking day.\n\nRespond with a clear list like:\nMon — [Workout]\nTue — [Workout]\n...\n\nInclude 1–2 short coach notes at the end about how to approach the week, in the Where the Fire Went tone.`,
+    );
+
+    return coachingReply;
   }
 
   if (
@@ -54,6 +114,42 @@ export const handleTextMessage = async (rawText: string): Promise<string> => {
 
     const coachingReply = await runFitnessAgent(
       `Here is a summary of Tyler's workout database over the last 60 days:\n\n${summary}\n\nUser question: "${text}"\n\nAnswer as the Where the Fire Went Fitness Agent and connect these patterns to discipline, recovery, and next aligned steps.`,
+    );
+
+    return coachingReply;
+  }
+
+  if (
+    lower.includes('where can i improve') ||
+    lower.includes('what am i neglecting') ||
+    lower.includes('what am i missing in my training') ||
+    lower.includes('what do i need more of')
+  ) {
+    const { getWorkoutOverview } = await import('../integrations/notion');
+    const overview = await getWorkoutOverview(60);
+
+    if (overview.totalSessions === 0) {
+      return "I don't see any completed workouts in your Notion database yet. Once you’ve logged a few weeks, I can tell you exactly which edges want more attention.";
+    }
+
+    const entries = Object.entries(overview.byType).sort((a, b) => b[1] - a[1]);
+    const top = entries[0];
+    const low = entries.filter(([, count]) => count > 0).slice(-2);
+
+    const statsLines = entries.map(
+      ([type, count]) => `${type}: ${count} session${count === 1 ? '' : 's'}`,
+    );
+
+    const summary = [
+      `Total sessions (last 60 days): ${overview.totalSessions}`,
+      `Distinct workouts: ${overview.distinctWorkouts}`,
+      '',
+      'By type:',
+      ...statsLines,
+    ].join('\n');
+
+    const coachingReply = await runFitnessAgent(
+      `Tyler is asking where she can improve in her training.\n\nHere are her stats over the last 60 days:\n\n${summary}\n\nHighlight which training types are overrepresented versus underrepresented, and give 2–3 concrete adjustments (sessions to add, shift, or soften) that stay within her protocol and protect her nervous system.\n\nRespond in the established Where the Fire Went tone.`,
     );
 
     return coachingReply;
@@ -139,6 +235,63 @@ export const handleTextMessage = async (rawText: string): Promise<string> => {
     return coachingReply;
   }
 
+  if (
+    lower.includes('suggested weights') ||
+    lower.includes('what weights should i use') ||
+    lower.includes('predict weights') ||
+    lower.includes('weight suggestions')
+  ) {
+    const templatesForWeights = await getDistinctWorkoutNames(50);
+    const matchedTemplateForWeights = templatesForWeights.find((name) =>
+      lower.includes(name.toLowerCase()),
+    );
+
+    if (!matchedTemplateForWeights) {
+      return 'Tell me which workout you want suggestions for. For example: `suggested weights for Legs & Glutes Pt.2`.';
+    }
+
+    const { workout, suggestions } = await getSuggestedWeightsForTodayWorkout(
+      matchedTemplateForWeights,
+    );
+
+    if (!workout) {
+      return `I don’t see a workout for today in Notion named **${matchedTemplateForWeights}**. Once today’s page is created from that template, I can generate suggestions directly into it.`;
+    }
+
+    if (!suggestions.length) {
+      return `I couldn’t infer any weights for **${matchedTemplateForWeights}** yet. Log at least one session with weights and I’ll build suggestions from there.`;
+    }
+
+    const { updateWorkoutWeights } = await import('../integrations/notion');
+    await updateWorkoutWeights(
+      workout.id,
+      suggestions.map((s) => ({ exercise: s.exercise, suggestedWeight: s.suggestedWeight })),
+    );
+
+    const lines: string[] = [];
+    lines.push(
+      `Here are suggested weights for today’s **${matchedTemplateForWeights}** session (written into the Lbs. column in Notion):`,
+    );
+    suggestions.forEach((s) => {
+      if (s.suggestedWeight === undefined) {
+        lines.push(`• ${s.exercise} — start conservatively and focus on clean form.`);
+      } else if (s.lastWeight !== undefined) {
+        lines.push(
+          `• ${s.exercise} — last: ${s.lastWeight} lb → suggest: ${s.suggestedWeight} lb`,
+        );
+      } else {
+        lines.push(`• ${s.exercise} — suggest: ${s.suggestedWeight} lb`);
+      }
+    });
+
+    lines.push('');
+    lines.push(
+      'Treat these as a progressive starting point—never at the expense of form, joints, or nervous system calm.',
+    );
+
+    return lines.join('\n');
+  }
+
   if (lower.startsWith('note ')) {
     const note = text.slice(5).trim();
 
@@ -146,6 +299,7 @@ export const handleTextMessage = async (rawText: string): Promise<string> => {
       return '📝 To add a session note, reply like: `note Felt strong on hip thrusts today.`';
     }
 
+    await logDailyCheckin(note);
     const { workoutName } = await appendSessionNoteToTodayWorkout(note);
     return `📝 Got it. I added this note to today’s “${workoutName}” session in Notion.`;
   }
